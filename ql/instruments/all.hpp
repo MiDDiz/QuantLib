@@ -20,6 +20,10 @@
 #include <ql/instruments/cpicapfloor.hpp>
 #include <ql/instruments/cpiswap.hpp>
 #include <ql/instruments/creditdefaultswap.hpp>
+#include <ql/instruments/crosscurrencyswap.hpp>
+#include <ql/instruments/constnotionalcrosscurrencybasisswap.hpp>
+#include <ql/instruments/constnotionalcrosscurrencyfixedvsfloatingswap.hpp>
+#include <ql/instruments/constnotionalcrosscurrencyswap.hpp>
 #include <ql/instruments/dividendschedule.hpp>
 #include <ql/instruments/doublebarrieroption.hpp>
 #include <ql/instruments/doublebarriertype.hpp>
@@ -32,6 +36,7 @@
 #include <ql/instruments/forwardrateagreement.hpp>
 #include <ql/instruments/forwardvanillaoption.hpp>
 #include <ql/instruments/futures.hpp>
+#include <ql/instruments/fxforward.hpp>
 #include <ql/instruments/holderextensibleoption.hpp>
 #include <ql/instruments/impliedvolatility.hpp>
 #include <ql/instruments/inflationcapfloor.hpp>
@@ -39,12 +44,14 @@
 #include <ql/instruments/makecapfloor.hpp>
 #include <ql/instruments/makecds.hpp>
 #include <ql/instruments/makecms.hpp>
+#include <ql/instruments/makemultipleresetsswap.hpp>
 #include <ql/instruments/makeois.hpp>
 #include <ql/instruments/makeswaption.hpp>
 #include <ql/instruments/makevanillaswap.hpp>
 #include <ql/instruments/makeyoyinflationcapfloor.hpp>
 #include <ql/instruments/margrabeoption.hpp>
 #include <ql/instruments/multiassetoption.hpp>
+#include <ql/instruments/multipleresetsswap.hpp>
 #include <ql/instruments/nonstandardswap.hpp>
 #include <ql/instruments/nonstandardswaption.hpp>
 #include <ql/instruments/oneassetoption.hpp>
@@ -52,11 +59,13 @@
 #include <ql/instruments/overnightindexfuture.hpp>
 #include <ql/instruments/partialtimebarrieroption.hpp>
 #include <ql/instruments/payoffs.hpp>
+#include <ql/instruments/perpetualfutures.hpp>
 #include <ql/instruments/quantobarrieroption.hpp>
 #include <ql/instruments/quantoforwardvanillaoption.hpp>
 #include <ql/instruments/quantovanillaoption.hpp>
 #include <ql/instruments/simplechooseroption.hpp>
 #include <ql/instruments/simplifynotificationgraph.hpp>
+#include <ql/instruments/softbarrieroption.hpp>
 #include <ql/instruments/stickyratchet.hpp>
 #include <ql/instruments/stock.hpp>
 #include <ql/instruments/swap.hpp>

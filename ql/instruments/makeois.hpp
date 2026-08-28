@@ -4,6 +4,7 @@
  Copyright (C) 2009 Ferdinando Ametrano
  Copyright (C) 2017 Joseph Jeisman
  Copyright (C) 2017 Fabrice Lecuyer
+ Copyright (C) 2026 Sergio Araujo
 
  This file is part of QuantLib, a free-software/open-source library
  for financial quantitative analysts and developers - http://quantlib.org/
@@ -12,7 +13,7 @@
  under the terms of the QuantLib license.  You should have received a
  copy of the license along with this program; if not, please email
  <quantlib-dev@lists.sf.net>. The license is also available online at
- <http://quantlib.org/license.shtml>.
+ <https://www.quantlib.org/license.shtml>.
 
  This program is distributed in the hope that it will be useful, but WITHOUT
  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
@@ -27,6 +28,7 @@
 #define quantlib_makeois_hpp
 
 #include <ql/instruments/overnightindexedswap.hpp>
+#include <ql/optional.hpp>
 #include <ql/time/dategenerationrule.hpp>
 #include <ql/termstructures/yieldtermstructure.hpp>
 
@@ -51,6 +53,7 @@ namespace QuantLib {
         MakeOIS& withNominal(Real n);
 
         MakeOIS& withSettlementDays(Natural settlementDays);
+        MakeOIS& withSettlementCalendar(const Calendar& cal);
         MakeOIS& withEffectiveDate(const Date&);
         MakeOIS& withTerminationDate(const Date&);
         MakeOIS& withRule(DateGeneration::Rule r);
@@ -76,6 +79,7 @@ namespace QuantLib {
         MakeOIS& withEndOfMonth(bool flag = true);
         MakeOIS& withFixedLegEndOfMonth(bool flag = true);
         MakeOIS& withOvernightLegEndOfMonth(bool flag = true);
+        MakeOIS& withMaturityEndOfMonth(bool flag = true);
 
         MakeOIS& withFixedLegDayCount(const DayCounter& dc);
 
@@ -91,6 +95,7 @@ namespace QuantLib {
         MakeOIS& withLookbackDays(Natural lookbackDays);
         MakeOIS& withLockoutDays(Natural lockoutDays);
         MakeOIS& withObservationShift(bool applyObservationShift = true);
+        MakeOIS& withRoundingPrecision(const std::optional<Integer>& roundingPrecision);
 
         MakeOIS& withPricingEngine(
                               const ext::shared_ptr<PricingEngine>& engine);
@@ -100,9 +105,10 @@ namespace QuantLib {
         Rate fixedRate_;
         Period forwardStart_;
 
-        Natural settlementDays_ = 2;
+        Natural settlementDays_ = Null<Natural>();
         Date effectiveDate_, terminationDate_;
         Calendar fixedCalendar_, overnightCalendar_;
+        Calendar settlementCalendar_;
 
         Frequency fixedPaymentFrequency_ = Annual;
         Frequency overnightPaymentFrequency_ = Annual;
@@ -117,6 +123,7 @@ namespace QuantLib {
         DateGeneration::Rule fixedRule_ = DateGeneration::Backward;
         DateGeneration::Rule overnightRule_ = DateGeneration::Backward;
         bool fixedEndOfMonth_ = false, overnightEndOfMonth_ = false, isDefaultEOM_ = true;
+        std::optional<bool> maturityEndOfMonth_;
 
         Swap::Type type_ = Swap::Payer;
         Real nominal_ = 1.0;
@@ -131,6 +138,7 @@ namespace QuantLib {
         Natural lookbackDays_ = Null<Natural>();
         Natural lockoutDays_ = 0;
         bool applyObservationShift_ = false;
+        std::optional<Integer> roundingPrecision_;
     };
 
 }

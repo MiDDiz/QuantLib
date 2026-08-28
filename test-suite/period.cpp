@@ -10,7 +10,7 @@
  under the terms of the QuantLib license.  You should have received a
  copy of the license along with this program; if not, please email
  <quantlib-dev@lists.sf.net>. The license is also available online at
- <http://quantlib.org/license.shtml>.
+ <https://www.quantlib.org/license.shtml>.
 
  This program is distributed in the hope that it will be useful, but WITHOUT
  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
@@ -216,7 +216,7 @@ BOOST_AUTO_TEST_CASE(testNormalization) {
 
         for (Period p2 : test_values) {
             auto n2 = p2.normalized();
-            ext::optional<bool> comparison;
+            std::optional<bool> comparison;
             try {
                 comparison = (p1 == p2);
             } catch (Error&) {

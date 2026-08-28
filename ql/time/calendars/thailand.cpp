@@ -11,7 +11,7 @@
  under the terms of the QuantLib license.  You should have received a
  copy of the license along with this program; if not, please email
  <quantlib-dev@lists.sf.net>. The license is also available online at
- <http://quantlib.org/license.shtml>.
+ <https://www.quantlib.org/license.shtml>.
 
  This program is distributed in the hope that it will be useful, but WITHOUT
  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
@@ -39,10 +39,10 @@ namespace QuantLib {
             || ((d == 1 || (d == 3 && w == Monday)) && m == January)
             // Chakri Memorial Day
             || ((d == 6 || ((d == 7 || d == 8) && w == Monday)) && m == April)
-            // Songkran Festival (was cancelled in 2020 due to the Covid-19 Pandamic)
+            // Songkran Festival (was cancelled in 2020 due to the Covid-19 Pandemic)
             || ((d == 13 || d == 14 || d == 15) && m == April && y != 2020)
             // Substitution Songkran Festival, usually not more than 5 days in total (was cancelled
-            // in 2020 due to the Covid-19 Pandamic)
+            // in 2020 due to the Covid-19 Pandemic)
             || (d == 16 && (w == Monday || w == Tuesday) && m == April && y != 2020)
             // Labor Day
             || ((d == 1 || ((d == 2 || d == 3) && w == Monday)) && m == May)

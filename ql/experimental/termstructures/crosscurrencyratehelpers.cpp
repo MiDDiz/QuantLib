@@ -2,6 +2,8 @@
 
 /*
  Copyright (C) 2021 Marcin Rybacki
+ Copyright (C) 2025 Uzair Beg
+ Copyright (C) 2026 Kyrylo Protsenko
 
  This file is part of QuantLib, a free-software/open-source library
  for financial quantitative analysts and developers - http://quantlib.org/
@@ -10,7 +12,7 @@
  under the terms of the QuantLib license.  You should have received a
  copy of the license along with this program; if not, please email
  <quantlib-dev@lists.sf.net>. The license is also available online at
- <http://quantlib.org/license.shtml>.
+ <https://www.quantlib.org/license.shtml>.
 
  This program is distributed in the hope that it will be useful, but WITHOUT
  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
@@ -21,13 +23,31 @@
 #include <ql/cashflows/iborcoupon.hpp>
 #include <ql/cashflows/cashflows.hpp>
 #include <ql/cashflows/simplecashflow.hpp>
+#include <ql/cashflows/fixedratecoupon.hpp>
+#include <ql/experimental/fx/discountingmtmcrosscurrencybasisswapengine.hpp>
 #include <ql/experimental/termstructures/crosscurrencyratehelpers.hpp>
+#include <ql/pricingengines/swap/discountingconstnotionalcrosscurrencyswapengine.hpp>
 #include <ql/utilities/null_deleter.hpp>
 #include <utility>
 
 namespace QuantLib {
 
     namespace {
+
+        constexpr double sample_fixed_rate = 0.01;
+
+        // Treat an explicitly-passed NoFrequency the same as an unset (nullopt)
+        // payment frequency.  Before these parameters were migrated to
+        // std::optional<Frequency>, NoFrequency was the sentinel meaning "derive
+        // the schedule from the index tenor".  Normalizing it here preserves that
+        // behavior and keeps the stored optional either empty or holding an
+        // actual frequency, so the rest of the code can treat the two cases
+        // identically.
+        std::optional<Frequency> normalizedPaymentFrequency(std::optional<Frequency> frequency) {
+            if (frequency && *frequency == NoFrequency)
+                return std::nullopt;
+            return frequency;
+        }
 
         Schedule legSchedule(const Date& evaluationDate,
                              const Period& tenor,
@@ -52,37 +72,45 @@ namespace QuantLib {
                 .backwards();
         }
 
-        Leg buildFloatingLeg(const Date& evaluationDate,
-                         const Period& tenor,
-                         Natural fixingDays,
-                         const Calendar& calendar,
-                         BusinessDayConvention convention,
-                         bool endOfMonth,
-                         const ext::shared_ptr<IborIndex>& idx,
-                         Frequency paymentFrequency,
-                         Integer paymentLag) {
+        Schedule floatingLegSchedule(const Date& evaluationDate,
+                                     const Period& tenor,
+                                     Natural fixingDays,
+                                     const Calendar& calendar,
+                                     BusinessDayConvention convention,
+                                     bool endOfMonth,
+                                     const ext::shared_ptr<IborIndex>& idx,
+                                     std::optional<Frequency> paymentFrequency) {
             auto overnightIndex = ext::dynamic_pointer_cast<OvernightIndex>(idx);
 
             Period freqPeriod;
-            if (paymentFrequency == NoFrequency) {
+            if (!paymentFrequency) {
                 QL_REQUIRE(!overnightIndex, "Require payment frequency for overnight indices.");
                 freqPeriod = idx->tenor();
             } else {
-                freqPeriod = Period(paymentFrequency);
+                freqPeriod = Period(*paymentFrequency);
             }
 
-            Schedule sch = legSchedule(evaluationDate, tenor, freqPeriod, fixingDays, calendar,
-                                       convention, endOfMonth);
-            if (overnightIndex != nullptr) {
-                return OvernightLeg(sch, overnightIndex)
+            return legSchedule(evaluationDate, tenor, freqPeriod, fixingDays, calendar,
+                               convention, endOfMonth);
+        }
+
+        Leg buildFloatingLeg(const Schedule& schedule,
+                             const ext::shared_ptr<IborIndex>& idx,
+                             Integer paymentLag,
+                             std::optional<bool> useIndexedCoupons) {
+            if (auto overnightIndex = ext::dynamic_pointer_cast<OvernightIndex>(idx)) {
+                return OvernightLeg(schedule, overnightIndex)
                     .withNotionals(1.0)
                     .withPaymentLag(paymentLag);
             }
-            return IborLeg(sch, idx).withNotionals(1.0).withPaymentLag(paymentLag);
+            return IborLeg(schedule, idx)
+                .withNotionals(1.0)
+                .withPaymentLag(paymentLag)
+                .withIndexedCoupons(useIndexedCoupons);
         }
 
         std::pair<Real, Real>
-        npvbpsConstNotionalLeg(const Leg& iborLeg,
+        npvbpsConstNotionalLeg(const Leg& leg,
                                const Date& initialNotionalExchangeDate,
                                const Date& finalNotionalExchangeDate,
                                const Handle<YieldTermStructure>& discountCurveHandle) {
@@ -90,7 +118,7 @@ namespace QuantLib {
             Date refDt = discountCurveHandle->referenceDate();
             const YieldTermStructure& discountRef = **discountCurveHandle;
             bool includeSettleDtFlows = true;
-            auto [npv, bps] = CashFlows::npvbps(iborLeg, discountRef, includeSettleDtFlows, refDt, refDt);
+            auto [npv, bps] = CashFlows::npvbps(leg, discountRef, includeSettleDtFlows, refDt, refDt);
             // Include NPV of the notional exchange at start and maturity.
             npv += (-1.0) * discountRef.discount(initialNotionalExchangeDate);
             npv += discountRef.discount(finalNotionalExchangeDate);
@@ -98,94 +126,63 @@ namespace QuantLib {
             return { npv, bps };
         }
 
-        class ResettingLegHelper {
-          public:
-            explicit ResettingLegHelper(const YieldTermStructure& discountCurve,
-                                        const YieldTermStructure& foreignCurve)
-            : discountCurve_(discountCurve), foreignCurve_(foreignCurve) {}
-            DiscountFactor discount(const Date& d) const {
-                return discountCurve_.discount(d);
-            }
-            Real notionalAdjustment(const Date& d) const {
-                return foreignCurve_.discount(d) / discountCurve_.discount(d);
-            }
-
-          private:
-            const YieldTermStructure& discountCurve_;
-            const YieldTermStructure& foreignCurve_;
-        };
-
-        class ResettingLegCalculator : public AcyclicVisitor, public Visitor<Coupon> {
-          public:
-            explicit ResettingLegCalculator(const YieldTermStructure& discountCurve,
-                                            const YieldTermStructure& foreignCurve,
-                                            Integer paymentLag,
-                                            Calendar paymentCalendar,
-                                            BusinessDayConvention convention)
-            : helper_(discountCurve, foreignCurve), paymentLag_(paymentLag),
-              paymentCalendar_(std::move(paymentCalendar)), convention_(convention) {}
-
-            void visit(Coupon& c) override {
-                Date start = c.accrualStartDate();
-                Date end = c.accrualEndDate();
-                Time accrual = c.accrualPeriod();
-                Real adjustedNotional = c.nominal() * helper_.notionalAdjustment(start);
-
-                DiscountFactor discountStart, discountEnd;
-
-                if (paymentLag_ == 0) {
-                    discountStart = helper_.discount(start);
-                    discountEnd = helper_.discount(end);
-                } else {
-                    Date paymentStart =
-                        paymentCalendar_.advance(start, paymentLag_, Days, convention_);
-                    Date paymentEnd = paymentCalendar_.advance(end, paymentLag_, Days, convention_);
-                    discountStart = helper_.discount(paymentStart);
-                    discountEnd = helper_.discount(paymentEnd);
-                }
-
-                // NPV of a resetting coupon consists of a redemption of borrowed amount occurring
-                // at the end of the accrual period plus the accrued interest, minus the borrowed
-                // amount at the start of the period. All amounts are corrected by an adjustment
-                // corresponding to the implied forward exchange rate, which is estimated by
-                // the ratio of foreign and domestic curves discount factors.
-                Real npvRedeemedAmount =
-                    adjustedNotional * discountEnd * (1.0 + c.rate() * accrual);
-                Real npvBorrowedAmount = -adjustedNotional * discountStart;
-
-                npv_ += (npvRedeemedAmount + npvBorrowedAmount);
-                bps_ += adjustedNotional * discountEnd * accrual;
-            }
-            Real NPV() const { return npv_; }
-            Real BPS() const { return bps_; }
-
-          private:
-            ResettingLegHelper helper_;
-            Real npv_ = 0.0;
-            Real bps_ = 0.0;
-            Integer paymentLag_;
-            Calendar paymentCalendar_;
-            BusinessDayConvention convention_;
-        };
-
-        std::pair<Real, Real> npvbpsResettingLeg(const Leg& iborLeg,
-                                                 Integer paymentLag,
-                                                 const Calendar& paymentCalendar,
-                                                 BusinessDayConvention convention,
-                                                 const Handle<YieldTermStructure>& discountCurveHandle,
-                                                 const Handle<YieldTermStructure>& foreignCurveHandle) {
-            const YieldTermStructure& discountCurveRef = **discountCurveHandle;
-            const YieldTermStructure& foreignCurveRef = **foreignCurveHandle;
-
-            ResettingLegCalculator calc(discountCurveRef, foreignCurveRef, paymentLag,
-                                        paymentCalendar, convention);
-            for (const auto& i : iborLeg) {
-                CashFlow& cf = *i;
-                cf.accept(calc);
-            }
-            return { calc.NPV(), calc.BPS() };
-        }
     }
+
+
+    CrossCurrencySwapRateHelperBase::CrossCurrencySwapRateHelperBase(
+        const Handle<Quote>& quote,
+        const Period& tenor,
+        Natural fixingDays,
+        Calendar calendar,
+        BusinessDayConvention convention,
+        bool endOfMonth,
+        Handle<YieldTermStructure> collateralCurve,
+        Integer paymentLag,
+        bool paymentLagOnNotionalExchanges)
+    : RelativeDateRateHelper(quote), tenor_(tenor), fixingDays_(fixingDays),
+      calendar_(std::move(calendar)), convention_(convention), endOfMonth_(endOfMonth),
+      paymentLag_(paymentLag), paymentLagOnNotionalExchanges_(paymentLagOnNotionalExchanges),
+      collateralHandle_(std::move(collateralCurve)) {
+        registerWith(collateralHandle_);
+    }
+
+    void CrossCurrencySwapRateHelperBase::setTermStructure(YieldTermStructure* t) {
+        // do not set the relinkable handle as an observer -
+        // force recalculation when needed
+        bool observer = false;
+
+        ext::shared_ptr<YieldTermStructure> temp(t, null_deleter());
+        termStructureHandle_.linkTo(temp, observer);
+
+        RelativeDateRateHelper::setTermStructure(t);
+    }
+
+    void CrossCurrencySwapRateHelperBase::initializeDatesFromLegs(const Leg& firstLeg,
+                                                                  const Leg& secondLeg) {
+        earliestDate_ = std::min(CashFlows::startDate(firstLeg),
+                                 CashFlows::startDate(secondLeg));
+
+        maturityDate_ = std::max(CashFlows::maturityDate(firstLeg),
+                                 CashFlows::maturityDate(secondLeg));
+
+        // Principal exchanges settle on the effective and maturity dates:
+        // the payment lag applies only to coupons -- unless the swap's
+        // convention lags the principal flows too, in which case both
+        // exchanges move by the same lag as the coupons and the final
+        // exchange settles together with the final coupon.  advance() with
+        // zero days reduces to adjust(), preserving the default behaviour.
+        Integer exchangeLag = paymentLagOnNotionalExchanges_ ? paymentLag_ : 0;
+        initialNotionalExchangeDate_ = calendar_.advance(earliestDate_, exchangeLag, Days, convention_);
+        finalNotionalExchangeDate_   = calendar_.advance(maturityDate_, exchangeLag, Days, convention_);
+
+        Date lastPaymentDate =
+            std::max(firstLeg.back()->date(),
+                     secondLeg.back()->date());
+
+        latestRelevantDate_ = latestDate_ = std::max(maturityDate_, lastPaymentDate);
+    }
+
+
 
     CrossCurrencyBasisSwapRateHelperBase::CrossCurrencyBasisSwapRateHelperBase(
         const Handle<Quote>& basis,
@@ -199,64 +196,55 @@ namespace QuantLib {
         Handle<YieldTermStructure> collateralCurve,
         bool isFxBaseCurrencyCollateralCurrency,
         bool isBasisOnFxBaseCurrencyLeg,
-        Frequency paymentFrequency,
-        Integer paymentLag)
-    : RelativeDateRateHelper(basis), tenor_(tenor), fixingDays_(fixingDays),
-      calendar_(std::move(calendar)), convention_(convention), endOfMonth_(endOfMonth),
+        std::optional<Frequency> paymentFrequency,
+        Integer paymentLag,
+        std::optional<Frequency> quoteCurrencyPaymentFrequency,
+        std::optional<bool> useIndexedCoupons,
+        bool paymentLagOnNotionalExchanges)
+    : CrossCurrencySwapRateHelperBase(basis, tenor, fixingDays, std::move(calendar), convention, endOfMonth,
+                                      std::move(collateralCurve), paymentLag,
+                                      paymentLagOnNotionalExchanges),
       baseCcyIdx_(std::move(baseCurrencyIndex)), quoteCcyIdx_(std::move(quoteCurrencyIndex)),
-      collateralHandle_(std::move(collateralCurve)),
       isFxBaseCurrencyCollateralCurrency_(isFxBaseCurrencyCollateralCurrency),
       isBasisOnFxBaseCurrencyLeg_(isBasisOnFxBaseCurrencyLeg),
-      paymentFrequency_(paymentFrequency), paymentLag_(paymentLag) {
+      paymentFrequency_(normalizedPaymentFrequency(paymentFrequency)),
+      quoteCcyPaymentFrequency_(normalizedPaymentFrequency(quoteCurrencyPaymentFrequency)),
+      useIndexedCoupons_(useIndexedCoupons) {
         registerWith(baseCcyIdx_);
         registerWith(quoteCcyIdx_);
-        registerWith(collateralHandle_);
+
         CrossCurrencyBasisSwapRateHelperBase::initializeDates();
     }
 
     void CrossCurrencyBasisSwapRateHelperBase::initializeDates() {
-        baseCcyIborLeg_ = buildFloatingLeg(evaluationDate_, tenor_, fixingDays_, calendar_, convention_,
-                                       endOfMonth_, baseCcyIdx_, paymentFrequency_, paymentLag_);
-        quoteCcyIborLeg_ = buildFloatingLeg(evaluationDate_, tenor_, fixingDays_, calendar_,
-                                        convention_, endOfMonth_, quoteCcyIdx_, paymentFrequency_, paymentLag_);
-        earliestDate_ = std::min(CashFlows::startDate(baseCcyIborLeg_), 
-                                CashFlows::startDate(quoteCcyIborLeg_));
-        maturityDate_ = std::max(CashFlows::maturityDate(baseCcyIborLeg_),
-                                 CashFlows::maturityDate(quoteCcyIborLeg_));
-        if (paymentLag_ == 0) {
-            initialNotionalExchangeDate_ = earliestDate_;
-            finalNotionalExchangeDate_ = maturityDate_;
-        } else {
-            initialNotionalExchangeDate_ = calendar_.advance(earliestDate_, paymentLag_, Days, convention_);
-            finalNotionalExchangeDate_ = calendar_.advance(maturityDate_, paymentLag_, Days, convention_);
-        }
-        Date lastPaymentDate = std::max(baseCcyIborLeg_.back()->date(), quoteCcyIborLeg_.back()->date());
-        latestRelevantDate_ = latestDate_ = std::max(maturityDate_, lastPaymentDate);
+        baseCcySchedule_ = floatingLegSchedule(evaluationDate_, tenor_, fixingDays_, calendar_,
+                                               convention_, endOfMonth_, baseCcyIdx_,
+                                               paymentFrequency_);
+        baseCcyIborLeg_ = buildFloatingLeg(
+            baseCcySchedule_, baseCcyIdx_, paymentLag_, useIndexedCoupons_);
+
+        // If no quote-currency payment frequency was given, fall back to the
+        // base-currency payment frequency (which may itself be unset, in which
+        // case the quote-currency leg uses its own index tenor).
+        std::optional<Frequency> effectiveQuoteCcyFreq =
+            quoteCcyPaymentFrequency_ ? quoteCcyPaymentFrequency_ : paymentFrequency_;
+        quoteCcySchedule_ = floatingLegSchedule(evaluationDate_, tenor_, fixingDays_, calendar_,
+                                                convention_, endOfMonth_, quoteCcyIdx_,
+                                                effectiveQuoteCcyFreq);
+        quoteCcyIborLeg_ = buildFloatingLeg(
+            quoteCcySchedule_, quoteCcyIdx_, paymentLag_, useIndexedCoupons_);
+
+        initializeDatesFromLegs(baseCcyIborLeg_, quoteCcyIborLeg_);
     }
 
     const Handle<YieldTermStructure>&
     CrossCurrencyBasisSwapRateHelperBase::baseCcyLegDiscountHandle() const {
-        QL_REQUIRE(!termStructureHandle_.empty(), "term structure not set");
-        QL_REQUIRE(!collateralHandle_.empty(), "collateral term structure not set");
         return isFxBaseCurrencyCollateralCurrency_ ? collateralHandle_ : termStructureHandle_;
     }
 
     const Handle<YieldTermStructure>&
     CrossCurrencyBasisSwapRateHelperBase::quoteCcyLegDiscountHandle() const {
-        QL_REQUIRE(!termStructureHandle_.empty(), "term structure not set");
-        QL_REQUIRE(!collateralHandle_.empty(), "collateral term structure not set");
         return isFxBaseCurrencyCollateralCurrency_ ? termStructureHandle_ : collateralHandle_;
-    }
-
-    void CrossCurrencyBasisSwapRateHelperBase::setTermStructure(YieldTermStructure* t) {
-        // do not set the relinkable handle as an observer -
-        // force recalculation when needed
-        bool observer = false;
-
-        ext::shared_ptr<YieldTermStructure> temp(t, null_deleter());
-        termStructureHandle_.linkTo(temp, observer);
-
-        RelativeDateRateHelper::setTermStructure(t);
     }
 
     ConstNotionalCrossCurrencyBasisSwapRateHelper::ConstNotionalCrossCurrencyBasisSwapRateHelper(
@@ -271,8 +259,11 @@ namespace QuantLib {
         const Handle<YieldTermStructure>& collateralCurve,
         bool isFxBaseCurrencyCollateralCurrency,
         bool isBasisOnFxBaseCurrencyLeg,
-        Frequency paymentFrequency,
-        Integer paymentLag)
+        std::optional<Frequency> paymentFrequency,
+        Integer paymentLag,
+        std::optional<Frequency> quoteCurrencyPaymentFrequency,
+        std::optional<bool> useIndexedCoupons,
+        bool paymentLagOnNotionalExchanges)
     : CrossCurrencyBasisSwapRateHelperBase(basis,
                                            tenor,
                                            fixingDays,
@@ -285,12 +276,46 @@ namespace QuantLib {
                                            isFxBaseCurrencyCollateralCurrency,
                                            isBasisOnFxBaseCurrencyLeg,
                                            paymentFrequency,
-                                           paymentLag) {}
+                                           paymentLag,
+                                           quoteCurrencyPaymentFrequency,
+                                           useIndexedCoupons,
+                                           paymentLagOnNotionalExchanges) {
+        buildSwap();
+    }
+
+    void ConstNotionalCrossCurrencyBasisSwapRateHelper::initializeDates() {
+        CrossCurrencyBasisSwapRateHelperBase::initializeDates();
+        buildSwap();
+    }
+
+    void ConstNotionalCrossCurrencyBasisSwapRateHelper::buildSwap() {
+        // The exposed swap mirrors the helper's par convention: unit notionals,
+        // zero spreads and spot FX = 1, so that its fair spread on the basis
+        // leg reproduces the helper quote.  It pays the base-currency leg.
+        swap_ = ext::make_shared<ConstNotionalCrossCurrencyBasisSwap>(
+            1.0, baseCcyIdx_->currency(), baseCcySchedule_, baseCcyIdx_, 0.0, 1.0,
+            1.0, quoteCcyIdx_->currency(), quoteCcySchedule_, quoteCcyIdx_, 0.0, 1.0,
+            paymentLag_, paymentLag_, false, Null<Natural>(), false, 0,
+            RateAveraging::Compound, false, Null<Natural>(), false, 0,
+            RateAveraging::Compound, false, useIndexedCoupons_,
+            paymentLagOnNotionalExchanges_);
+        swap_->setPricingEngine(ext::make_shared<DiscountingConstNotionalCrossCurrencySwapEngine>(
+            quoteCcyIdx_->currency(), quoteCcyLegDiscountHandle(),
+            baseCcyIdx_->currency(), baseCcyLegDiscountHandle(),
+            makeQuoteHandle(1.0), true));
+    }
 
     Real ConstNotionalCrossCurrencyBasisSwapRateHelper::impliedQuote() const {
+        QL_REQUIRE(!termStructureHandle_.empty(), "term structure not set");
+        QL_REQUIRE(!collateralHandle_.empty(), "collateral term structure not set");
+
         auto [npvBaseCcy, bpsBaseCcy] = npvbpsConstNotionalLeg(baseCcyIborLeg_, initialNotionalExchangeDate_, finalNotionalExchangeDate_, baseCcyLegDiscountHandle());
         auto [npvQuoteCcy, bpsQuoteCcy] = npvbpsConstNotionalLeg(quoteCcyIborLeg_, initialNotionalExchangeDate_, finalNotionalExchangeDate_, quoteCcyLegDiscountHandle());
+
         Real bps = isBasisOnFxBaseCurrencyLeg_ ? -bpsBaseCcy : bpsQuoteCcy;
+
+        QL_REQUIRE(std::fabs(bps) > 0.0, "null BPS");
+
         return -(npvQuoteCcy - npvBaseCcy) / bps;
     }
 
@@ -301,6 +326,7 @@ namespace QuantLib {
         else
             RateHelper::accept(v);
     }
+
 
     MtMCrossCurrencyBasisSwapRateHelper::MtMCrossCurrencyBasisSwapRateHelper(
         const Handle<Quote>& basis,
@@ -315,8 +341,12 @@ namespace QuantLib {
         bool isFxBaseCurrencyCollateralCurrency,
         bool isBasisOnFxBaseCurrencyLeg,
         bool isFxBaseCurrencyLegResettable,
-        Frequency paymentFrequency,
-        Integer paymentLag)
+        std::optional<Frequency> paymentFrequency,
+        Integer paymentLag,
+        std::optional<Frequency> quoteCurrencyPaymentFrequency,
+        Natural fxResetFixingDays,
+        Calendar fxResetFixingCalendar,
+        std::optional<bool> useIndexedCoupons)
     : CrossCurrencyBasisSwapRateHelperBase(basis,
                                            tenor,
                                            fixingDays,
@@ -329,31 +359,46 @@ namespace QuantLib {
                                            isFxBaseCurrencyCollateralCurrency,
                                            isBasisOnFxBaseCurrencyLeg,
                                            paymentFrequency,
-                                           paymentLag),
-      isFxBaseCurrencyLegResettable_(isFxBaseCurrencyLegResettable) {}
+                                           paymentLag,
+                                           quoteCurrencyPaymentFrequency,
+                                           useIndexedCoupons),
+      isFxBaseCurrencyLegResettable_(isFxBaseCurrencyLegResettable),
+      fxResetFixingDays_(fxResetFixingDays), fxResetFixingCalendar_(std::move(fxResetFixingCalendar)) {
+        buildSwap();
+    }
+
+    void MtMCrossCurrencyBasisSwapRateHelper::initializeDates() {
+        CrossCurrencyBasisSwapRateHelperBase::initializeDates();
+        buildSwap();
+    }
+
+    void MtMCrossCurrencyBasisSwapRateHelper::buildSwap() {
+        // The exposed swap mirrors the helper's par convention: unit notionals,
+        // zero spreads and spot FX = 1, so that its fair spread on the basis
+        // leg reproduces the helper quote.  It pays the base-currency leg.
+        swap_ = ext::make_shared<MtMCrossCurrencyBasisSwap>(
+            MtMCrossCurrencyBasisSwap::Type::PayFxBaseCurrency,
+            1.0, baseCcyIdx_->currency(), baseCcySchedule_, baseCcyIdx_, 0.0, 1.0,
+            1.0, quoteCcyIdx_->currency(), quoteCcySchedule_, quoteCcyIdx_, 0.0, 1.0,
+            isFxBaseCurrencyLegResettable_, fxResetFixingDays_,
+            fxResetFixingCalendar_, paymentLag_, paymentLag_,
+            convention_, convention_, false, Null<Natural>(), false, 0,
+            RateAveraging::Compound, false, Null<Natural>(), false, 0,
+            RateAveraging::Compound, false, useIndexedCoupons_);
+        swap_->setPricingEngine(ext::make_shared<DiscountingMtMCrossCurrencyBasisSwapEngine>(
+            quoteCcyIdx_->currency(), quoteCcyLegDiscountHandle(),
+            baseCcyIdx_->currency(), baseCcyLegDiscountHandle(),
+            makeQuoteHandle(1.0), true));
+    }
 
     Real MtMCrossCurrencyBasisSwapRateHelper::impliedQuote() const {
-        Real npvBaseCcy = 0.0, bpsBaseCcy = 0.0;
-        Real npvQuoteCcy = 0.0, bpsQuoteCcy = 0.0;
-        if (isFxBaseCurrencyLegResettable_) {
-            std::tie(npvBaseCcy, bpsBaseCcy) =
-                npvbpsResettingLeg(baseCcyIborLeg_, paymentLag_, calendar_, convention_,
-                                   baseCcyLegDiscountHandle(), quoteCcyLegDiscountHandle());
-            std::tie(npvQuoteCcy, bpsQuoteCcy) =
-                npvbpsConstNotionalLeg(quoteCcyIborLeg_, initialNotionalExchangeDate_,
-                                       finalNotionalExchangeDate_, quoteCcyLegDiscountHandle());
-        } else {
-            std::tie(npvBaseCcy, bpsBaseCcy) =
-                npvbpsConstNotionalLeg(baseCcyIborLeg_, initialNotionalExchangeDate_,
-                                       finalNotionalExchangeDate_, baseCcyLegDiscountHandle());
-            std::tie(npvQuoteCcy, bpsQuoteCcy) = npvbpsResettingLeg(
-                                       quoteCcyIborLeg_, paymentLag_, calendar_, convention_,
-                                       quoteCcyLegDiscountHandle(), baseCcyLegDiscountHandle());
-        }
+        QL_REQUIRE(!termStructureHandle_.empty(), "term structure not set");
+        QL_REQUIRE(!collateralHandle_.empty(), "collateral term structure not set");
 
-        Real bps = isBasisOnFxBaseCurrencyLeg_ ? -bpsBaseCcy : bpsQuoteCcy;
-
-        return -(npvQuoteCcy - npvBaseCcy) / bps;
+        swap_->deepUpdate();
+        if (isBasisOnFxBaseCurrencyLeg_)
+            return swap_->fairFxBaseSpread();
+        return swap_->fairFxQuoteSpread();
     }
 
     void MtMCrossCurrencyBasisSwapRateHelper::accept(AcyclicVisitor& v) {
@@ -363,4 +408,106 @@ namespace QuantLib {
         else
             RateHelper::accept(v);
     }
+
+
+    ConstNotionalCrossCurrencySwapRateHelper::ConstNotionalCrossCurrencySwapRateHelper(
+        const Handle<Quote>& fixedRate,
+        const Period& tenor,
+        Natural fixingDays,
+        const Calendar& calendar,
+        BusinessDayConvention convention,
+        bool endOfMonth,
+        Frequency fixedFrequency,
+        DayCounter  fixedDayCount,
+        const ext::shared_ptr<IborIndex>& floatIndex,
+        const Handle<YieldTermStructure>& collateralCurve,
+        bool collateralOnFixedLeg,
+        Integer paymentLag,
+        std::optional<bool> useIndexedCoupons,
+        std::optional<Frequency> floatPaymentFrequency)
+    : CrossCurrencySwapRateHelperBase(fixedRate, tenor, fixingDays, calendar, convention, endOfMonth,
+                                      collateralCurve, paymentLag),
+      fixedFrequency_(fixedFrequency),
+      fixedDayCount_(std::move(fixedDayCount)),
+      floatIndex_(floatIndex),
+      collateralOnFixedLeg_(collateralOnFixedLeg),
+      useIndexedCoupons_(useIndexedCoupons),
+      floatPaymentFrequency_(normalizedPaymentFrequency(floatPaymentFrequency)) {
+
+        QL_REQUIRE(floatIndex_, "floating index required");
+        registerWith(floatIndex_);
+
+        initializeDates();
+    }
+
+    void ConstNotionalCrossCurrencySwapRateHelper::initializeDates() {
+        Real nominal = 1.0;
+        // Both legs roll on the helper's calendar and convention.  The floating
+        // index supplies its fixing calendar for fixings, not for the accrual schedule.
+        // Taking the roll convention or calendar from the index would make the
+        // two legs diverge at a month-end roll and move the implied pillar.
+        Schedule fixedSch = legSchedule(evaluationDate_, tenor_, Period(fixedFrequency_), fixingDays_, calendar_,
+                                       convention_, endOfMonth_);
+        // An overnight index has no payment frequency of its own, so
+        // floatingLegSchedule requires one to have been supplied.
+        Schedule floatSch = floatingLegSchedule(evaluationDate_, tenor_, fixingDays_, calendar_,
+                                                convention_, endOfMonth_, floatIndex_,
+                                                floatPaymentFrequency_);
+
+        xccySwap_ = ext::make_shared<ConstNotionalCrossCurrencyFixedVsFloatingSwap>(
+            Swap::Payer,
+            nominal,
+            Currency(), 
+            fixedSch,
+            sample_fixed_rate,
+            fixedDayCount_,
+            convention_,
+            paymentLag_,
+            calendar_,
+            nominal,
+            floatIndex_->currency(),
+            floatSch,
+            floatIndex_,
+            Spread(0.0),
+            convention_,
+            paymentLag_,
+            calendar_,
+            false, false, Null<Natural>(), false, 0,
+            RateAveraging::Compound, useIndexedCoupons_
+        );
+        auto engine = ext::make_shared<DiscountingConstNotionalCrossCurrencySwapEngine>(
+            floatIndex_->currency(), floatingLegDiscountHandle(),
+            Currency(), fixedLegDiscountHandle(),
+            makeQuoteHandle(1.0), true);
+        xccySwap_->setPricingEngine(engine);
+
+        initializeDatesFromLegs(xccySwap_->leg(0), xccySwap_->leg(1));
+    }
+
+    const Handle<YieldTermStructure>&
+    ConstNotionalCrossCurrencySwapRateHelper::fixedLegDiscountHandle() const {
+        return collateralOnFixedLeg_ ? collateralHandle_ : termStructureHandle_;
+    }
+
+    const Handle<YieldTermStructure>&
+    ConstNotionalCrossCurrencySwapRateHelper::floatingLegDiscountHandle() const {
+        return collateralOnFixedLeg_ ? termStructureHandle_ : collateralHandle_;
+    }
+
+    Real ConstNotionalCrossCurrencySwapRateHelper::impliedQuote() const {
+        QL_REQUIRE(!termStructureHandle_.empty(), "term structure not set");
+        QL_REQUIRE(!collateralHandle_.empty(), "collateral term structure not set");
+        xccySwap_->deepUpdate();
+
+        return xccySwap_->fairRate();
+    }
+
+    void ConstNotionalCrossCurrencySwapRateHelper::accept(AcyclicVisitor& v) {
+        auto* v1 = dynamic_cast<Visitor<ConstNotionalCrossCurrencySwapRateHelper>*>(&v);
+        if (v1 != nullptr)
+            v1->visit(*this);
+        else
+            RateHelper::accept(v);
+    }
+
 }

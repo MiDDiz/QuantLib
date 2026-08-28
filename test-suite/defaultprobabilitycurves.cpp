@@ -11,7 +11,7 @@
  under the terms of the QuantLib license.  You should have received a
  copy of the license along with this program; if not, please email
  <quantlib-dev@lists.sf.net>. The license is also available online at
- <http://quantlib.org/license.shtml>.
+ <https://www.quantlib.org/license.shtml>.
 
  This program is distributed in the hope that it will be useful, but WITHOUT
  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
@@ -298,7 +298,7 @@ void testBootstrapFromUpfront() {
                                   upfrontDate,
                                   ext::shared_ptr<Claim>(),
                                   Actual360(true),
-                                  true, today);
+                                  true);
             cds.setPricingEngine(ext::shared_ptr<PricingEngine>(
                            new MidPointCdsEngine(piecewiseCurve, recoveryRate,
                                                  discountCurve, true)));
@@ -390,7 +390,7 @@ BOOST_AUTO_TEST_CASE(testUpfrontBootstrap) {
     // This checks that UpfrontCdsHelper::impliedQuote() didn't
     // override the flag permanently; after the bootstrap, it should
     // go back to its previous value.
-    ext::optional<bool> flag = Settings::instance().includeTodaysCashFlows();
+    std::optional<bool> flag = Settings::instance().includeTodaysCashFlows();
     if (flag != false)
         BOOST_ERROR("Cash-flow settings improperly modified");
 }

@@ -10,7 +10,7 @@
  under the terms of the QuantLib license.  You should have received a
  copy of the license along with this program; if not, please email
  <quantlib-dev@lists.sf.net>. The license is also available online at
- <http://quantlib.org/license.shtml>.
+ <https://www.quantlib.org/license.shtml>.
 
  This program is distributed in the hope that it will be useful, but WITHOUT
  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
@@ -59,39 +59,12 @@ namespace QuantLib {
                                Rate baseRate = Null<Rate>());
         //@}
 
-        QL_DEPRECATED_DISABLE_WARNING
-        ~InflationTermStructure() override = default;
-        QL_DEPRECATED_ENABLE_WARNING
-
-        //! \name Inflation interface
-        //@{
-        /*! \deprecated Do not use; inflation curves always have an explicit
-                        base date now.
-                        Deprecated in version 1.39.
-        */
-        [[deprecated("Do not use; inflation curves always have an explicit base date now.")]]
-        virtual Period observationLag() const;
-
         virtual Frequency frequency() const;
         virtual Rate baseRate() const;
 
         //! minimum (base) date
-        /*! The last date for which we have information.
-
-            When not set directly (the recommended option), it is
-            calculated base on an observation lag relative to today.
-        */
+        /*! The last date for which we have information. */
         virtual Date baseDate() const;
-
-        /*! \deprecated Do not use; inflation curves always have an explicit
-                        base date now.
-                        Deprecated in version 1.39.
-        */
-        [[deprecated("Do not use; inflation curves always have an explicit base date now.")]]
-        bool hasExplicitBaseDate() const {
-            return true;
-        }
-        //@}
 
         //! \name Seasonality
         //@{
@@ -108,17 +81,9 @@ namespace QuantLib {
 
         ext::shared_ptr<Seasonality> seasonality_;
 
-        /*! \deprecated Do not use; inflation curves always have an explicit
-                        base date now.
-                        Deprecated in version 1.39.
-        */
-        [[deprecated("Do not use; inflation curves always have an explicit base date now.")]]
-        Period observationLag_;
-
         Frequency frequency_;
         mutable Rate baseRate_;
-
-      private:
+        // Can be set by subclasses that don't have baseDate available in constructors.
         Date baseDate_;
     };
 
@@ -149,18 +114,23 @@ namespace QuantLib {
         //! \name Inspectors
         //@{
         //! zero-coupon inflation rate.
-        /*! Essentially the fair rate for a zero-coupon inflation swap
-            (by definition), i.e. the zero term structure uses yearly
-            compounding, which is assumed for ZCIIS instrument quotes.
+        /*! The zero term structure uses yearly compounding, which is
+            assumed for ZCIIS instrument quotes.
 
-            \note by default you get the same as lag and interpolation
-            as the term structure.
-            If you want to get predictions of RPI/CPI/etc then use an
-            index.
+            If you want to get predictions of RPI/CPI/etc. use the
+            corresponding index instead; if you need a ZCIIS rate,
+            retrieve it from the instrument.
         */
-        Rate zeroRate(const Date& d, const Period& instObsLag = Period(-1,Days),
+        Rate zeroRate(const Date& d, bool extrapolate = false) const;
+
+        /*! \deprecated Use the overload without a lag instead.
+                        Deprecated in version 1.41.
+        */
+        [[deprecated("Use the overload without a lag instead")]]
+        Rate zeroRate(const Date& d, const Period& instObsLag,
                       bool forceLinearInterpolation = false,
                       bool extrapolate = false) const;
+
         //! zero-coupon inflation rate.
         /*! \warning Since inflation is highly linked to dates (lags,
                      interpolation, months for seasonality, etc) this
@@ -202,59 +172,25 @@ namespace QuantLib {
                                   Frequency frequency,
                                   const DayCounter& dayCounter,
                                   const ext::shared_ptr<Seasonality>& seasonality = {});
-
-        /*! \deprecated Use an overload with an explicit base date and without indexIsInterpolated.
-                        Deprecated in version 1.37.
-        */
-        [[deprecated("Use an overload with an explicit base date and without indexIsInterpolated")]]
-        YoYInflationTermStructure(Date baseDate,
-                                  Rate baseYoYRate,
-                                  Frequency frequency,
-                                  bool indexIsInterpolated,
-                                  const DayCounter& dayCounter,
-                                  const ext::shared_ptr<Seasonality>& seasonality = {});
-
-        /*! \deprecated Use an overload with an explicit base date and without indexIsInterpolated.
-                        Deprecated in version 1.37.
-        */
-        [[deprecated("Use an overload with an explicit base date and without indexIsInterpolated")]]
-        YoYInflationTermStructure(const Date& referenceDate,
-                                  Date baseDate,
-                                  Rate baseYoYRate,
-                                  Frequency frequency,
-                                  bool indexIsInterpolated,
-                                  const DayCounter& dayCounter,
-                                  const ext::shared_ptr<Seasonality>& seasonality = {});
-
-        /*! \deprecated Use an overload with an explicit base date and without indexIsInterpolated.
-                        Deprecated in version 1.37.
-        */
-        [[deprecated("Use an overload with an explicit base date and without indexIsInterpolated")]]
-        YoYInflationTermStructure(Natural settlementDays,
-                                  const Calendar& calendar,
-                                  Date baseDate,
-                                  Rate baseYoYRate,
-                                  Frequency frequency,
-                                  bool indexIsInterpolated,
-                                  const DayCounter& dayCounter,
-                                  const ext::shared_ptr<Seasonality>& seasonality = {});
         //@}
-
-        QL_DEPRECATED_DISABLE_WARNING
-        ~YoYInflationTermStructure() override = default;
-        QL_DEPRECATED_ENABLE_WARNING
 
         //! \name Inspectors
         //@{
         //! year-on-year inflation rate.
-        /*! The forceLinearInterpolation parameter is relative to the
-            frequency of the TS.
-
-            \note this is not the year-on-year swap (YYIIS) rate.
+        /*! This does not return the year-on-year swap (YYIIS) rate.
+            If you need that rate, retrieve it from the corresponding
+            instrument instead.
         */
-        Rate yoyRate(const Date& d, const Period& instObsLag = Period(-1,Days),
+        Rate yoyRate(const Date& d, bool extrapolate = false) const;
+
+        /*! \deprecated Use the overload without a lag instead.
+                        Deprecated in version 1.41.
+        */
+        [[deprecated("Use the overload without a lag instead")]]
+        Rate yoyRate(const Date& d, const Period& instObsLag,
                      bool forceLinearInterpolation = false,
                      bool extrapolate = false) const;
+
         //! year-on-year inflation rate.
         /*! \warning Since inflation is highly linked to dates (lags,
                      interpolation, months for seasonality, etc) this
@@ -266,20 +202,9 @@ namespace QuantLib {
                      bool extrapolate = false) const;
         //@}
 
-        /*! \deprecated This method will disappear. When it does, the curve will behave as if it returned false.
-                        Deprecated in version 1.37.
-        */
-        [[deprecated("This method will disappear. When it does, the curve will behave as if it returned false")]]
-        virtual bool indexIsInterpolated() const;
       protected:
         //! to be defined in derived classes
         virtual Rate yoyRateImpl(Time time) const = 0;
-
-        /*! \deprecated This data member will disappear. When it does, the curve will behave as if it was false.
-                        Deprecated in version 1.37.
-        */
-        [[deprecated("This data member will disappear. When it does, the curve will behave as if it was false")]]
-        bool indexIsInterpolated_ = false;
     };
 
 
@@ -297,12 +222,6 @@ namespace QuantLib {
 
     // inline
 
-    inline Period InflationTermStructure::observationLag() const {
-        QL_DEPRECATED_DISABLE_WARNING
-        return observationLag_;
-        QL_DEPRECATED_ENABLE_WARNING
-    }
-
     inline Frequency InflationTermStructure::frequency() const {
         return frequency_;
     }
@@ -318,12 +237,6 @@ namespace QuantLib {
 
     inline bool InflationTermStructure::hasSeasonality() const {
         return static_cast<bool>(seasonality_);
-    }
-
-    inline bool YoYInflationTermStructure::indexIsInterpolated() const {
-        QL_DEPRECATED_DISABLE_WARNING
-        return indexIsInterpolated_;
-        QL_DEPRECATED_ENABLE_WARNING
     }
 
 }

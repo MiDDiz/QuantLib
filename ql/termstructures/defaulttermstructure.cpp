@@ -13,7 +13,7 @@
  under the terms of the QuantLib license.  You should have received a
  copy of the license along with this program; if not, please email
  <quantlib-dev@lists.sf.net>. The license is also available online at
- <http://quantlib.org/license.shtml>.
+ <https://www.quantlib.org/license.shtml>.
 
  This program is distributed in the hope that it will be useful, but WITHOUT
  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
@@ -107,6 +107,12 @@ namespace QuantLib {
         QL_REQUIRE(d1 <= d2,
                    "initial date (" << d1 << ") "
                    "later than final date (" << d2 << ")");
+        // We allow d1 to precede the reference date, which effectively assumes 
+        // that the default probability before the reference date is null. This 
+        // helps in cases where a coupon protection starts a couple of days before 
+        // the reference date due to date adjustments (for instance, when the 
+        // protection starts on a Saturday and the reference is rolled to the 
+        // following Monday).
         Probability p1 = d1 < referenceDate() ? 0.0 :
                                            defaultProbability(d1,extrapolate),
                     p2 = defaultProbability(d2,extrapolate);
@@ -120,6 +126,10 @@ namespace QuantLib {
         QL_REQUIRE(t1 <= t2,
                    "initial time (" << t1 << ") "
                    "later than final time (" << t2 << ")");
+        // We allow t1 to precede 0.0, which effectively assumes that the 
+        // default probability before the reference time is null. This helps in 
+        // cases where a coupon protection starts a couple of days before the 
+        // reference date due to date adjustments.
         Probability p1 = t1 < 0.0 ? 0.0 : defaultProbability(t1,extrapolate),
                     p2 = defaultProbability(t2,extrapolate);
         return p2 - p1;

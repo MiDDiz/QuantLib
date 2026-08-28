@@ -14,7 +14,7 @@
  under the terms of the QuantLib license.  You should have received a
  copy of the license along with this program; if not, please email
  <quantlib-dev@lists.sf.net>. The license is also available online at
- <http://quantlib.org/license.shtml>.
+ <https://www.quantlib.org/license.shtml>.
 
  This program is distributed in the hope that it will be useful, but WITHOUT
  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
@@ -44,11 +44,13 @@ namespace QuantLib {
                            const Date& refPeriodEnd,
                            const DayCounter& dayCounter,
                            bool isInArrears,
-                           const Date& exCouponDate)
+                           const Date& exCouponDate,
+                           BusinessDayConvention fixingConvention)
     : FloatingRateCoupon(paymentDate, nominal, startDate, endDate,
                          fixingDays, iborIndex, gearing, spread,
                          refPeriodStart, refPeriodEnd,
-                         dayCounter, isInArrears, exCouponDate),
+                         dayCounter, isInArrears, exCouponDate,
+                         fixingConvention),
       iborIndex_(iborIndex) {
         fixingDate_ = FloatingRateCoupon::fixingDate();
     }
@@ -257,7 +259,12 @@ namespace QuantLib {
         return *this;
 	}
 
-    IborLeg& IborLeg::withIndexedCoupons(ext::optional<bool> b) {
+    IborLeg& IborLeg::withFixingConvention(BusinessDayConvention convention) {
+        fixingConvention_ = convention;
+        return *this;
+    }
+
+    IborLeg& IborLeg::withIndexedCoupons(std::optional<bool> b) {
         useIndexedCoupons_ = b;
         return *this;
     }
@@ -273,7 +280,8 @@ namespace QuantLib {
                          schedule_, notionals_, index_, paymentDayCounter_,
                          paymentAdjustment_, fixingDays_, gearings_, spreads_,
                          caps_, floors_, inArrears_, zeroPayments_, paymentLag_, paymentCalendar_, 
-			             exCouponPeriod_, exCouponCalendar_, exCouponAdjustment_, exCouponEndOfMonth_);
+			             exCouponPeriod_, exCouponCalendar_, exCouponAdjustment_, exCouponEndOfMonth_,
+			             fixingConvention_);
 
         if (caps_.empty() && floors_.empty() && !inArrears_) {
             ext::shared_ptr<IborCouponPricer> pricer = ext::make_shared<BlackIborCouponPricer>(

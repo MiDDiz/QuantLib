@@ -7,9 +7,11 @@
 #include <ql/indexes/ibor/bibor.hpp>
 #include <ql/indexes/ibor/bkbm.hpp>
 #include <ql/indexes/ibor/cadlibor.hpp>
+#include <ql/indexes/ibor/cdi.hpp>
 #include <ql/indexes/ibor/cdor.hpp>
 #include <ql/indexes/ibor/chflibor.hpp>
 #include <ql/indexes/ibor/corra.hpp>
+#include <ql/indexes/ibor/custom.hpp>
 #include <ql/indexes/ibor/destr.hpp>
 #include <ql/indexes/ibor/dkklibor.hpp>
 #include <ql/indexes/ibor/eonia.hpp>
@@ -23,6 +25,7 @@
 #include <ql/indexes/ibor/kofr.hpp>
 #include <ql/indexes/ibor/libor.hpp>
 #include <ql/indexes/ibor/mosprime.hpp>
+#include <ql/indexes/ibor/nibor.hpp>
 #include <ql/indexes/ibor/nzdlibor.hpp>
 #include <ql/indexes/ibor/nzocr.hpp>
 #include <ql/indexes/ibor/pribor.hpp>
@@ -30,14 +33,16 @@
 #include <ql/indexes/ibor/saron.hpp>
 #include <ql/indexes/ibor/seklibor.hpp>
 #include <ql/indexes/ibor/shibor.hpp>
+#include <ql/indexes/ibor/shir.hpp>
 #include <ql/indexes/ibor/sofr.hpp>
 #include <ql/indexes/ibor/sonia.hpp>
 #include <ql/indexes/ibor/swestr.hpp>
 #include <ql/indexes/ibor/tibor.hpp>
-#include <ql/indexes/ibor/tona.hpp>
+#include <ql/indexes/ibor/tonar.hpp>
 #include <ql/indexes/ibor/thbfix.hpp>
 #include <ql/indexes/ibor/trlibor.hpp>
 #include <ql/indexes/ibor/usdlibor.hpp>
 #include <ql/indexes/ibor/wibor.hpp>
+#include <ql/indexes/ibor/zaronia.hpp>
 #include <ql/indexes/ibor/zibor.hpp>
 

@@ -12,7 +12,7 @@
  under the terms of the QuantLib license.  You should have received a
  copy of the license along with this program; if not, please email
  <quantlib-dev@lists.sf.net>. The license is also available online at
- <http://quantlib.org/license.shtml>.
+ <https://www.quantlib.org/license.shtml>.
 
  This program is distributed in the hope that it will be useful, but WITHOUT
  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
@@ -215,7 +215,7 @@ struct CommonVars {
                                                        dc,
                                                        observationLag,
                                                        frequency,
-                                                       iir->interpolated()));
+                                                       false));
 
 
         switch (which) {
@@ -445,6 +445,49 @@ BOOST_AUTO_TEST_CASE(testParity) {
             }
         }
     }
+    // remove circular refernce
+    vars.hy.reset();
+}
+
+BOOST_AUTO_TEST_CASE(testVolatilityQuoteObservability) {
+
+    BOOST_TEST_MESSAGE("Testing yoy inflation cap repricing when its volatility quote moves...");
+
+    CommonVars vars;
+
+    auto quote = ext::make_shared<SimpleQuote>(0.01);
+    Handle<YoYOptionletVolatilitySurface> volatility(
+        ext::make_shared<ConstantYoYOptionletVolatility>(Handle<Quote>(quote),
+                                                         vars.settlementDays,
+                                                         vars.calendar,
+                                                         vars.convention,
+                                                         vars.dc,
+                                                         vars.observationLag,
+                                                         vars.frequency,
+                                                         false));
+
+    Leg leg = vars.makeYoYLeg(vars.evaluationDate, 2);
+    auto cap = ext::make_shared<YoYInflationCap>(leg, std::vector<Rate>(1, 0.0295));
+    cap->setPricingEngine(ext::make_shared<YoYInflationBlackCapFloorEngine>(
+        vars.iir, volatility, vars.nominalTS));
+
+    Real quoted = cap->NPV();
+    quote->setValue(0.02);
+    Real moved = cap->NPV();
+
+    BOOST_CHECK_MESSAGE(moved != quoted,
+                        "yoy cap NPV did not move when its volatility quote did: "
+                        << quoted << " at vol 0.01 and " << moved << " at vol 0.02");
+
+    Leg other = vars.makeYoYLeg(vars.evaluationDate, 2);
+    auto fixed = ext::make_shared<YoYInflationCap>(other, std::vector<Rate>(1, 0.0295));
+    fixed->setPricingEngine(vars.makeEngine(0.02, 0));
+
+    Real expected = fixed->NPV();
+    BOOST_CHECK_MESSAGE(relativeError(moved, expected, expected) < 1.0e-10,
+                        "yoy cap priced off a quote of 0.02 gives " << moved
+                        << ", off a value of 0.02 gives " << expected);
+
     // remove circular refernce
     vars.hy.reset();
 }
